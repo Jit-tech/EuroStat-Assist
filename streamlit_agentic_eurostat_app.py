@@ -32,7 +32,19 @@ def call_ai_api(messages):
 
 # ─── Streamlit Page Config ─────────────────────────────────────────────────────
 st.set_page_config(page_title="Agentic EuroStat Economist", layout="wide")
-st.title("🌐 Agentic EuroStat Economist")
+
+# Stylish Header
+st.markdown("""
+    <style>
+        .main-title {
+            font-size: 32px;
+            font-weight: 800;
+            color: #1f77b4;
+            margin-bottom: 10px;
+        }
+    </style>
+    <div class='main-title'> EuroStat Econometric Assistant</div>
+    """, unsafe_allow_html=True)
 
 # Session memory
 if 'ai_history' not in st.session_state:
@@ -96,7 +108,6 @@ def make_scenarios_description(name: str, vals: list) -> str:
 # ─── Main Flow ────────────────────────────────────────────────────────────────
 if run_it:
     try:
-        # Fetch and merge time series
         frames = {}
         for ds in dsets:
             for geo in geos:
@@ -110,58 +121,38 @@ if run_it:
             st.stop()
         merged = pd.concat(frames.values(), axis=1)
 
-        # Line Chart with tooltip and dynamic crosshair
+        # KPI Panel
+        st.subheader("Key Statistics")
+        base = merged.columns[0]
+        rec = merged[base].dropna().iloc[-5:].tolist()
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Latest Value", f"{rec[-1]:,.2f}")
+        col2.metric("5-Year Avg", f"{np.mean(rec):.2f}")
+        col3.metric("Trend", "↑ Improving" if rec[-1] > rec[0] else "↓ Declining")
+
+        # Line Chart
         st.subheader("Historical Series")
         chart_data = merged.reset_index().melt('date', var_name='series', value_name='value')
         nearest = alt.selection(type='single', nearest=True, on='mouseover', fields=['date'], empty='none')
-        line = alt.Chart(chart_data).mark_line().encode(
-            x='date:T',
-            y='value:Q',
-            color='series:N'
-        )
-        selectors = alt.Chart(chart_data).mark_point().encode(
-            x='date:T',
-            opacity=alt.value(0),
-        ).add_selection(nearest)
-        points = line.mark_circle(size=100).encode(
-            opacity=alt.condition(nearest, alt.value(1), alt.value(0))
-        )
-        vline = alt.Chart(chart_data).mark_rule(color='gray').encode(
-            x='date:T',
-            opacity=alt.condition(nearest, alt.value(0.5), alt.value(0))
-        )
-        hline = alt.Chart(chart_data).mark_rule(color='gray').encode(
-            y='value:Q',
-            opacity=alt.condition(nearest, alt.value(0.5), alt.value(0))
-        )
-        tooltip = alt.Chart(chart_data).mark_text(align='left', dx=5, dy=-5).encode(
-            x='date:T',
-            y='value:Q',
-            text=alt.condition(nearest, 'value:Q', alt.value(' '))
-        )
+        line = alt.Chart(chart_data).mark_line().encode(x='date:T', y='value:Q', color='series:N')
+        selectors = alt.Chart(chart_data).mark_point().encode(x='date:T', opacity=alt.value(0)).add_selection(nearest)
+        points = line.mark_circle(size=100).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
+        vline = alt.Chart(chart_data).mark_rule(color='gray').encode(x='date:T', opacity=alt.condition(nearest, alt.value(0.5), alt.value(0)))
+        hline = alt.Chart(chart_data).mark_rule(color='gray').encode(y='value:Q', opacity=alt.condition(nearest, alt.value(0.5), alt.value(0)))
+        tooltip = alt.Chart(chart_data).mark_text(align='left', dx=5, dy=-5).encode(x='date:T', y='value:Q', text=alt.condition(nearest, 'value:Q', alt.value(' ')))
         combined = alt.layer(line, selectors, points, vline, hline, tooltip).interactive()
         st.altair_chart(combined, use_container_width=True)
 
-        # Distribution Visualization
         st.subheader("Data Distribution")
-        # Dropdown: show only dataset and geo (strip prefix) but map back to full column name
         full_cols = list(merged.columns)
         display_labels = [col.replace('Eurostat_', '') for col in full_cols]
         label_to_col = dict(zip(display_labels, full_cols))
         selected_label = st.selectbox("Select series to view distribution", display_labels)
         selected_col = label_to_col[selected_label]
         df_dist = merged[selected_col].reset_index().rename(columns={selected_col: 'value'})
-        # Traditional histogram
-        hist = alt.Chart(df_dist).mark_bar().encode(
-            x=alt.X('value:Q', bin=alt.Bin(maxbins=30), title='Value'),
-            y=alt.Y('count()', title='Frequency'),
-            tooltip=[alt.Tooltip('count()', title='Count'), alt.Tooltip('mean(value):Q', title='Average')]
-        ).properties(width=600, height=300).interactive()
+        hist = alt.Chart(df_dist).mark_bar().encode(x=alt.X('value:Q', bin=alt.Bin(maxbins=30), title='Value'), y=alt.Y('count()', title='Frequency'), tooltip=[alt.Tooltip('count()', title='Count'), alt.Tooltip('mean(value):Q', title='Average')]).properties(width=600, height=300).interactive()
         st.altair_chart(hist, use_container_width=True)
 
-        # Econometric Modeling
-
-        # Econometric Modeling
         st.subheader(f"Econometric Model: {model_type}")
         data = merged.dropna()
         if data.empty:
@@ -188,22 +179,20 @@ if run_it:
                     cur = lm.params[0] + lm.params[1] * (last + t) + np.random.choice(resid)
                     vals_list.append(cur)
                 sims[f"sim_{i}"] = vals_list
-            df_sim = pd.DataFrame(
-                sims,
-                index=pd.date_range(start=pd.Timestamp(f"{last+1}-01-01"), periods=5, freq='Y')
-            )
+            df_sim = pd.DataFrame(sims, index=pd.date_range(start=pd.Timestamp(f"{last+1}-01-01"), periods=5, freq='Y'))
             st.line_chart(df_sim)
 
-        # Agentic AI Insights
         st.subheader("Agentic AI Insights")
-        base = merged.columns[0]
-        rec = merged[base].dropna().iloc[-5:].tolist()
         prompt_text = edit_prompt.strip() or make_scenarios_description(base, rec)
-        msgs = [{"role": "system", "content": f"You are an economist analyzing '{base}'."},
-                {"role": "user", "content": prompt_text}]
+        msgs = [{"role": "system", "content": f"You are an economist analyzing '{base}'."}, {"role": "user", "content": prompt_text}]
         ai_out = call_ai_api(msgs)
         if ai_out:
-            st.markdown(ai_out)
+            with st.expander("View AI Output"):
+                st.markdown(ai_out)
             st.session_state.ai_history.append({'series': base, 'prompt': prompt_text, 'output': ai_out})
+            with st.expander("Session History"):
+                for i, row in enumerate(st.session_state.ai_history):
+                    st.markdown(f"**{i+1}. {row['series']}** – {row['prompt']}")
+                    st.markdown(f"`{row['output']}`")
     except Exception as e:
         st.exception(e)
